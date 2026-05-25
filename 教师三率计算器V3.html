@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教师三率计算器 V3</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-dark: #2563eb;
+        }
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+        .drag-active { background: #dbeafe !important; border-color: #3b82f6 !important; }
+        .fade-in { animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .modal-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 1000; backdrop-filter: blur(2px);
+        }
+        .section-card {
+            background: white; border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border: 1px solid #e5e7eb;
+        }
+        .gradient-header {
+            background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+        }
+        .text-neutral-dark { color: #1f2937; }
+        input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+        .result-row:hover { background: #f0f9ff; }
+        .rate-high { color: #16a34a; font-weight: 600; }
+        .rate-mid  { color: #ca8a04; }
+        .rate-low  { color: #dc2626; }
+        
+        /* Tab styles */
+        .tab-btn {
+            padding: 10px 20px;
+            font-weight: 500;
+            color: #6b7280;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { color: #3b82f6; }
+        .tab-btn.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        /* Grade select card */
+        .grade-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid #e2e8f0;
+        }
+        .grade-select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            background: white;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .grade-select:focus {
+            outline: none;
+            border-color: #3b82f6;
+            ring: 2px solid #bfdbfe;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+    <!-- Header -->
+    <div class="gradient-header text-white py-6 mb-6">
+        <div class="max-w-7xl mx-auto px-4">
+            <h1 class="text-2xl font-bold"><i class="fa-solid fa-calculator mr-2"></i>教师三率计算器 <span class="text-sm font-normal text-blue-200 ml-2">V3 · 政策2.0</span></h1>
+            <p class="text-blue-100 mt-1 text-sm">VWA三率考核 · 吻合率 · 过关率 · 升级率</p>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 pb-12 space-y-6">
+
+        <!-- Upload -->
+        <div class="section-card p-6 fade-in">
+            <h2 class="text-lg font-semibold text-neutral-dark mb-4">
+                <i class="fa-solid fa-file-arrow-up mr-2 text-blue-500"></i>上传成绩文件
+            </h2>
+            <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer transition-all hover:border-blue-400 hover:bg-blue-50">
+                <i class="fa-solid fa-cloud-upload-alt text-4xl text-gray-400 mb-3"></i>
+                <p class="text-gray-600 font-medium">拖拽 Excel 文件到此处</p>
+                <p class="text-gray-400 text-sm mt-1">或点击选择文件 · 支持 .xlsx .xls</p>
+                <input type="file" id="fileInput" accept=".xlsx,.xls" class="hidden">
+            </div>
+            <div id="fileInfo" class="hidden mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-file-excel text-green-600 text-2xl"></i>
+                    <div>
+                        <p id="fileName" class="font-semibold text-green-800"></p>
+                        <p id="fileStats" class="text-sm text-green-600"></p>
+                    </div>
+                    <button id="clearFile" class="ml-auto text-gray-400 hover:text-red-500 transition-colors">
+                        <i class="fa-solid fa-times-circle text-xl"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Benchmark Config -->
+        <div class="section-card p-6 fade-in" id="configSection" style="display:none;">
+            <h2 class="text-lg font-semibold text-neutral-dark mb-2">
+                <i class="fa-solid fa-sliders-h mr-2 text-blue-500"></i>目标分值/等级配置
+                <span class="text-xs font-normal text-gray-400 ml-2">政策2.0 · 可调整基准</span>
+            </h2>
+            <p class="text-sm text-gray-500 mb-4">设置不同培养计划下，各等级（吻合/过关/升级）的目标分值/等级</p>
+
+            <!-- Tabs -->
+            <div class="flex border-b border-gray-200 mb-6">
+                <div class="tab-btn active" data-tab="headTab">班主任目标分值</div>
+                <div class="tab-btn" data-tab="subjectTab">任课教师目标等级</div>
+            </div>
+
+            <!-- Tab Content: Head Teacher -->
+            <div id="headTab" class="tab-content active">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-4 py-3 text-left font-semibold text-gray-700 w-36">培养计划</th>
+                                <th class="px-4 py-3 text-center font-semibold text-gray-700">取科数</th>
+                                <th class="px-4 py-3 text-center font-semibold text-gray-700">含华文</th>
+                                <th class="px-4 py-3 text-center font-semibold text-gray-700">吻合基准</th>
+                                <th class="px-4 py-3 text-center font-semibold text-gray-700">过关基准</th>
+                                <th class="px-4 py-3 text-center font-semibold text-gray-700">升级基准</th>
+                            </tr>
+                        </thead>
+                        <tbody id="headConfigTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab Content: Subject Teacher -->
+            <div id="subjectTab" class="tab-content">
+                <p class="text-sm text-gray-500 mb-4">设置各培养计划下，任课教师的目标成绩等级</p>
+                <div id="subjectConfigGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+
+            <div class="mt-6 flex gap-3">
+                <button id="resetConfig" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm transition-colors">
+                    <i class="fa-solid fa-undo mr-1"></i>恢复默认
+                </button>
+                <button id="calculateBtn" class="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors shadow-sm">
+                    <i class="fa-solid fa-play mr-1"></i>开始计算
+                </button>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div class="section-card p-6 fade-in" id="resultsSection" style="display:none;">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-neutral-dark">
+                    <i class="fa-solid fa-chart-bar mr-2 text-blue-500"></i>计算结果
+                    <span id="resultCount" class="ml-2 text-sm font-normal text-gray-500"></span>
+                </h2>
+                <div class="flex gap-2">
+                    <button id="downloadCSV" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors shadow-sm">
+                        <i class="fa-solid fa-file-csv mr-1"></i>导出CSV
+                    </button>
+                    <button id="downloadExcel" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm">
+                        <i class="fa-solid fa-file-excel mr-1"></i>导出Excel
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="flex flex-wrap gap-3 mb-4 p-4 bg-gray-50 rounded-lg">
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-gray-600">教师类型:</label>
+                    <select id="teacherTypeFilter" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                        <option value="all">全部</option>
+                        <option value="班主任">班主任</option>
+                        <option value="任课老师">任课老师</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-gray-600">科目:</label>
+                    <select id="subjectFilter" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                        <option value="all">全部</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-gray-600">排序:</label>
+                    <select id="sortByFilter" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                        <option value="name">按姓名</option>
+                        <option value="total">按人数</option>
+                        <option value="meet_rate">按吻合率</option>
+                        <option value="pass_rate">按过关率</option>
+                        <option value="upgrade_rate">按升级率</option>
+                    </select>
+                </div>
+                <div class="flex-1 min-w-[200px]">
+                    <input type="text" id="searchInput" placeholder="搜索教师姓名..." class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="bg-gray-50 border-b">
+                            <th class="px-4 py-3 text-left font-semibold text-gray-700">类型</th>
+                            <th class="px-4 py-3 text-left font-semibold text-gray-700">科目</th>
+                            <th class="px-4 py-3 text-left font-semibold text-gray-700">姓名</th>
+                            <th class="px-4 py-3 text-center font-semibold text-gray-700">总人数</th>
+                            <th class="px-4 py-3 text-center font-semibold text-gray-700">吻合率</th>
+                            <th class="px-4 py-3 text-center font-semibold text-gray-700">过关率</th>
+                            <th class="px-4 py-3 text-center font-semibold text-gray-700">升级率</th>
+                            <th class="px-4 py-3 text-center font-semibold text-gray-700">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTable"></tbody>
+                </table>
+            </div>
+            <div id="emptyState" class="hidden py-12 text-center text-gray-400">
+                <i class="fa-solid fa-inbox text-4xl mb-3"></i>
+                <p>暂无结果</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detailModal" class="modal-overlay hidden">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col mx-4">
+            <div class="gradient-header text-white px-6 py-4 rounded-t-xl flex items-center justify-between">
+                <div>
+                    <h3 id="modalTeacherName" class="font-bold text-lg"></h3>
+                    <p id="modalTeacherType" class="text-blue-100 text-sm"></p>
+                </div>
+                <button id="closeDetailModal" class="text-white/70 hover:text-white text-2xl leading-none">&times;</button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6">
+                <div id="modalSummary" class="mb-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-600"></div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b">
+                                <th class="px-3 py-2 text-left font-semibold text-gray-700">学生姓名</th>
+                                <th class="px-3 py-2 text-left font-semibold text-gray-700">培养计划</th>
+                                <th class="px-3 py-2 text-left font-semibold text-gray-700">科目/等级/分值</th>
+                                <th class="px-3 py-2 text-center font-semibold text-gray-700 head-only">总分</th>
+                                <th class="px-3 py-2 text-center font-semibold text-gray-700">吻合</th>
+                                <th class="px-3 py-2 text-center font-semibold text-gray-700">过关</th>
+                                <th class="px-3 py-2 text-center font-semibold text-gray-700">升级</th>
+                                <th class="px-3 py-2 text-left font-semibold text-gray-700">判断详情</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studentDetailTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="errorModal" class="modal-overlay hidden">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                    <i class="fa-solid fa-exclamation-triangle text-red-500 text-xl"></i>
+                </div>
+                <h3 class="font-bold text-lg text-gray-800">出错了</h3>
+            </div>
+            <p id="errorMessage" class="text-gray-600 mb-2"></p>
+            <pre id="detailedError" class="hidden bg-gray-100 p-3 rounded-lg text-xs text-gray-500 overflow-x-auto max-h-48"></pre>
+            <button id="closeErrorModal" class="mt-4 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm transition-colors w-full">关闭</button>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" class="modal-overlay hidden">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 p-8 text-center">
+            <div class="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p id="loadingText" class="text-gray-600 font-medium">正在处理，请稍候...</p>
+        </div>
+    </div>
+
+<script>
+// ============================================================
+//  CONFIGURATION — 政策2.0 正确基准
+// ============================================================
+
+// 等级分值（7分制）
+const GRADE_MAP = { 'A*': 7, 'A': 6, 'B': 5, 'C': 4, 'D': 3, 'E': 2, 'E-': 1, 'U': 0 };
+const VALID_GRADES = Object.keys(GRADE_MAP);
+const GRADE_OPTIONS = ['A*', 'A', 'B', 'C', 'D', 'E', 'E-', 'U'];
+
+// 科目起始列（0-based），Excel F列=索引5，之后每科占2列
+const COLUMN_START = 5;
+const MAX_SUBJECTS = 11;
+
+// 华文关键词（排除时使用）
+const CHINESE_KEYWORDS = ['语文', '中文', 'chinese', '中文课'];
+
+// 有效计划名（中文）
+const VALID_PLANS = ['国大计划', '卓越计划', '精英计划', '培优计划', '青苗计划'];
+
+// 计划默认配置
+const PLAN_DEFAULTS = {
+    '国大计划': {
+        subject_count: 4,
+        exclude_chinese: true,
+        head: { meet: 20, pass: 24, upgrade: 28 },
+        sub: { meet: 'B', pass: 'A', upgrade: 'A*' }
+    },
+    '卓越计划': {
+        subject_count: 3,
+        exclude_chinese: true,
+        head: { meet: 15, pass: 18, upgrade: 21 },
+        sub: { meet: 'B', pass: 'A', upgrade: 'A*' }
+    },
+    '精英计划': {
+        subject_count: 3,
+        exclude_chinese: true,
+        head: { meet: 12, pass: 15, upgrade: 18 },
+        sub: { meet: 'C', pass: 'B', upgrade: 'A' }
+    },
+    '培优计划': {
+        subject_count: 3,
+        exclude_chinese: true,
+        head: { meet: 6, pass: 9, upgrade: 12 },
+        sub: { meet: 'E', pass: 'D', upgrade: 'C' }
+    },
+    '青苗计划': {
+        subject_count: 3,
+        exclude_chinese: false,
+        head: { meet: 3, pass: 6, upgrade: 9 },
+        sub: { meet: 'E-', pass: 'E', upgrade: 'D' }
+    }
+};
+
+// 用户可配置基准
+let headBenchmarks = {};  // 班主任总分基准
+let subBenchmarks = {};   // 任课教师等级基准
+
+let rawData = [];
+let allResults = [];
+let studentDetails = {};
+
+// ============================================================
+//  INIT
+// ============================================================
+function initApp() {
+    initConfig();
+    setupTabs();
+    setupDragDrop();
+    setupFilters();
+    setupModalEvents();
+}
+
+function initConfig() {
+    // 初始化可配置基准
+    Object.keys(PLAN_DEFAULTS).forEach(plan => {
+        headBenchmarks[plan] = { ...PLAN_DEFAULTS[plan].head };
+        subBenchmarks[plan] = { ...PLAN_DEFAULTS[plan].sub };
+    });
+
+    renderHeadConfig();
+    renderSubjectConfig();
+
+    // Reset button
+    document.getElementById('resetConfig').onclick = () => {
+        Object.keys(PLAN_DEFAULTS).forEach(plan => {
+            headBenchmarks[plan] = { ...PLAN_DEFAULTS[plan].head };
+            subBenchmarks[plan] = { ...PLAN_DEFAULTS[plan].sub };
+        });
+        renderHeadConfig();
+        renderSubjectConfig();
+    };
+}
+
+function renderHeadConfig() {
+    const table = document.getElementById('headConfigTable');
+    table.innerHTML = '';
+
+    const planBadgeStyle = {
+        '国大计划': 'background:#0369a1;color:white',
+        '卓越计划': 'background:#92400e;color:white',
+        '精英计划': 'background:#5b21b6;color:white',
+        '培优计划': 'background:#065f46;color:white',
+        '青苗计划': 'background:#9d174d;color:white',
+    };
+
+    Object.entries(PLAN_DEFAULTS).forEach(([plan, config]) => {
+        const row = document.createElement('tr');
+        row.className = 'border-b border-gray-100 hover:bg-gray-50';
+
+        row.innerHTML = `
+            <td class="px-4 py-3">
+                <span class="px-2 py-1 rounded text-xs font-bold" style="${planBadgeStyle[plan]}">${plan}</span>
+                <div class="text-xs text-gray-400 mt-0.5">${config.subject_count}科${config.exclude_chinese ? '·排除语文' : '·含语文'}</div>
+            </td>
+            <td class="px-4 py-3 text-center text-gray-600 font-medium">${config.subject_count}科</td>
+            <td class="px-4 py-3 text-center text-gray-600">${config.exclude_chinese ? '<span class="text-red-500 text-xs">否</span>' : '<span class="text-green-500 text-xs">是</span>'}</td>
+            <td class="px-4 py-3 text-center">
+                <input type="number" id="head_meet_${plan}" value="${headBenchmarks[plan].meet}" min="0" max="28"
+                    class="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    data-plan="${plan}" data-type="meet">
+            </td>
+            <td class="px-4 py-3 text-center">
+                <input type="number" id="head_pass_${plan}" value="${headBenchmarks[plan].pass}" min="0" max="28"
+                    class="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    data-plan="${plan}" data-type="pass">
+            </td>
+            <td class="px-4 py-3 text-center">
+                <input type="number" id="head_upgrade_${plan}" value="${headBenchmarks[plan].upgrade}" min="0" max="28"
+                    class="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    data-plan="${plan}" data-type="upgrade">
+            </td>
+        `;
+        table.appendChild(row);
+    });
+
+    // Input listeners
+    table.querySelectorAll('input').forEach(input => {
+        input.addEventListener('change', () => {
+            const plan = input.dataset.plan;
+            const type = input.dataset.type;
+            headBenchmarks[plan][type] = parseInt(input.value) || 0;
+        });
+    });
+}
+
+function renderSubjectConfig() {
+    const grid = document.getElementById('subjectConfigGrid');
+    grid.innerHTML = '';
+
+    const planBadgeStyle = {
+        '国大计划': 'background:#0369a1;color:white',
+        '卓越计划': 'background:#92400e;color:white',
+        '精英计划': 'background:#5b21b6;color:white',
+        '培优计划': 'background:#065f46;color:white',
+        '青苗计划': 'background:#9d174d;color:white',
+    };
+
+    Object.entries(PLAN_DEFAULTS).forEach(([plan, config]) => {
+        const card = document.createElement('div');
+        card.className = 'grade-card';
+
+        const createSelect = (type, label, color) => {
+            const currentValue = subBenchmarks[plan][type];
+            const options = GRADE_OPTIONS.map(g => 
+                `<option value="${g}" ${g === currentValue ? 'selected' : ''}>${g}</option>`
+            ).join('');
+            
+            return `
+                <div class="mb-3">
+                    <label class="block text-xs font-medium text-gray-600 mb-1">${label}目标等级</label>
+                    <select id="sub_${type}_${plan}" class="grade-select" data-plan="${plan}" data-type="${type}">
+                        ${options}
+                    </select>
+                    <div class="text-xs text-gray-400 mt-0.5">对应分值: ${GRADE_MAP[currentValue]}分</div>
+                </div>
+            `;
+        };
+
+        card.innerHTML = `
+            <div class="flex items-center gap-2 mb-3 pb-2 border-b border-gray-200">
+                <span class="px-2 py-0.5 rounded text-xs font-bold" style="${planBadgeStyle[plan]}">${plan}</span>
+                <span class="text-xs text-gray-400">${config.subject_count}科${config.exclude_chinese ? '·排除语文' : '·含语文'}</span>
+            </div>
+            ${createSelect('meet', '吻合率', '#0369a1')}
+            ${createSelect('pass', '过关率', '#92400e')}
+            ${createSelect('upgrade', '升级率', '#5b21b6')}
+        `;
+        grid.appendChild(card);
+    });
+
+    // Select listeners
+    grid.querySelectorAll('select').forEach(select => {
+        select.addEventListener('change', () => {
+            const plan = select.dataset.plan;
+            const type = select.dataset.type;
+            subBenchmarks[plan][type] = select.value;
+            // Update score display
+            const scoreDisplay = select.parentElement.querySelector('.text-xs.text-gray-400');
+            if (scoreDisplay) {
+                scoreDisplay.textContent = `对应分值: ${GRADE_MAP[select.value]}分`;
+            }
+        });
+    });
+}
+
+function setupTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            // Remove active from all tabs
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            // Add active to clicked tab
+            btn.classList.add('active');
+            const tabId = btn.dataset.tab;
+            document.getElementById(tabId).classList.add('active');
+        });
+    });
+}
+
+function setupDragDrop() {
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    dropZone.onclick = () => fileInput.click();
+    dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('drag-active'); };
+    dropZone.ondragleave = () => dropZone.classList.remove('drag-active');
+    dropZone.ondrop = e => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-active');
+        if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    };
+    fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); };
+
+    document.getElementById('clearFile').onclick = () => {
+        fileInput.value = '';
+        document.getElementById('fileInfo').classList.add('hidden');
+        document.getElementById('dropZone').style.display = '';
+        document.getElementById('configSection').style.display = 'none';
+        document.getElementById('resultsSection').style.display = 'none';
+        rawData = [];
+    };
+}
+
+function setupFilters() {
+    ['teacherTypeFilter', 'subjectFilter', 'sortByFilter'].forEach(id => {
+        document.getElementById(id).onchange = filterAndSortResults;
+    });
+    document.getElementById('searchInput').oninput = filterAndSortResults;
+    document.getElementById('calculateBtn').onclick = calculateAll;
+    document.getElementById('downloadCSV').onclick = downloadCSV;
+    document.getElementById('downloadExcel').onclick = downloadExcel;
+}
+
+function setupModalEvents() {
+    document.getElementById('closeDetailModal').onclick = () => document.getElementById('detailModal').classList.add('hidden');
+    document.getElementById('closeErrorModal').onclick = () => document.getElementById('errorModal').classList.add('hidden');
+    document.getElementById('detailModal').onclick = e => { if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden'); };
+    document.getElementById('errorModal').onclick = e => { if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden'); };
+}
+
+// ============================================================
+//  FILE HANDLING
+// ============================================================
+function handleFile(file) {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+        showError('文件格式错误', '请上传 .xlsx 或 .xls 格式的 Excel 文件');
+        return;
+    }
+
+    showLoading('正在读取文件...');
+    const reader = new FileReader();
+    reader.onload = e => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+            const sheetName = workbook.SheetNames[0];
+            const ws = workbook.Sheets[sheetName];
+            rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileStats').textContent =
+                `${rawData.length - 2} 名学生 · ${MAX_SUBJECTS} 个科目`;
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('dropZone').style.display = 'none';
+            document.getElementById('configSection').style.display = 'block';
+
+            populateSubjectFilter();
+            hideLoading();
+        } catch (err) {
+            hideLoading();
+            showError('文件读取失败', err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function populateSubjectFilter() {
+    const sel = document.getElementById('subjectFilter');
+    sel.innerHTML = '<option value="all">全部</option>';
+
+    const headers = rawData[0] || [];
+    for (let i = 0; i < MAX_SUBJECTS; i++) {
+        const teacherCol = COLUMN_START + i * 2;
+        const name = (headers[teacherCol] || '').trim();
+        if (name) {
+            const opt = document.createElement('option');
+            opt.value = i + 1;
+            opt.textContent = name;
+            sel.appendChild(opt);
+        }
+    }
+}
+
+// ============================================================
+//  HELPERS
+// ============================================================
+function getCell(row, colIdx) {
+    const v = row[colIdx];
+    if (v === undefined || v === null || v === '') return null;
+    return String(v).trim();
+}
+
+function normalizeGrade(v) {
+    if (!v) return null;
+    let s = String(v).trim().toUpperCase();
+    if (s === 'E减' || s === 'E-') return 'E-';
+    if (s === 'A星' || s === 'A*') return 'A*';
+    return s;
+}
+
+function isValidGrade(v) {
+    const g = normalizeGrade(v);
+    return g !== null && VALID_GRADES.includes(g);
+}
+
+function gradeScore(v) {
+    const g = normalizeGrade(v);
+    return g ? (GRADE_MAP[g] || 0) : 0;
+}
+
+function isChinese(subjectName) {
+    if (!subjectName) return false;
+    const lower = subjectName.toLowerCase();
+    return CHINESE_KEYWORDS.some(k => lower.includes(k.toLowerCase()));
+}
+
+function getSubjectInfo(row, subjectIndex) {
+    const teacherCol = COLUMN_START + (subjectIndex - 1) * 2;
+    const gradeCol   = teacherCol + 1;
+
+    const teacherName = getCell(row, teacherCol);
+    const gradeRaw    = getCell(row, gradeCol);
+    const gradeNorm   = normalizeGrade(gradeRaw);
+    const score       = isValidGrade(gradeRaw) ? GRADE_MAP[gradeNorm] : 0;
+    const valid       = isValidGrade(gradeRaw);
+
+    const headers = rawData[0] || [];
+    const subjectName = (headers[teacherCol] || '').trim() || `科目${subjectIndex}`;
+
+    return { teacherName, gradeRaw, gradeNorm, score, valid, subjectName, teacherCol, gradeCol };
+}
+
+function getValidGradesForStudent(row, excludeChinese) {
+    const grades = [];
+    for (let s = 1; s <= MAX_SUBJECTS; s++) {
+        const info = getSubjectInfo(row, s);
+        if (!info.valid) continue;
+        if (excludeChinese && isChinese(info.subjectName)) continue;
+        grades.push({ subjectIndex: s, subjectName: info.subjectName, score: info.score, gradeNorm: info.gradeNorm, gradeRaw: info.gradeRaw });
+    }
+    return grades;
+}
+
+function showError(msg, details) {
+    document.getElementById('errorMessage').textContent = msg;
+    const de = document.getElementById('detailedError');
+    if (details) { de.textContent = details; de.classList.remove('hidden'); }
+    else de.classList.add('hidden');
+    document.getElementById('errorModal').classList.remove('hidden');
+}
+
+function showLoading(msg) {
+    document.getElementById('loadingText').textContent = msg || '处理中...';
+    document.getElementById('loading').classList.remove('hidden');
+}
+function hideLoading() {
+    document.getElementById('loading').classList.add('hidden');
+}
+
+// ============================================================
+//  CORE CALCULATION
+// ============================================================
+function calculateAll() {
+    showLoading('正在计算三率，请稍候...');
+
+    studentDetails = {};
+    allResults = [];
+
+    const students = [];
+    for (let i = 2; i < rawData.length; i++) {
+        const row = rawData[i];
+        const name = getCell(row, 0);
+        if (!name) continue;
+        students.push({ row, name, index: i });
+    }
+
+    if (students.length === 0) {
+        hideLoading();
+        showError('未找到学生数据', '请确认Excel文件格式正确，第0行和第1行为表头，第2行起为学生数据。');
+        return;
+    }
+
+    // ---- 任课教师计算 ----
+    const subjectTeacherMap = new Map();
+    students.forEach(({ row, name: stuName }) => {
+        const plan = getCell(row, 4) || '';
+        if (!VALID_PLANS.includes(plan)) return;
+
+        for (let s = 1; s <= MAX_SUBJECTS; s++) {
+            const info = getSubjectInfo(row, s);
+            if (!info.teacherName) continue;
+
+            const key = `${info.teacherName}||${s}`;
+            if (!subjectTeacherMap.has(key)) {
+                subjectTeacherMap.set(key, {
+                    teacherName: info.teacherName,
+                    subjectIndex: s,
+                    subjectName: info.subjectName,
+                    total_count: 0,
+                    meet_count: 0,
+                    pass_count: 0,
+                    upgrade_count: 0,
+                    students: []
+                });
+            }
+
+            const entry = subjectTeacherMap.get(key);
+            if (!entry.students.some(x => x.name === stuName)) {
+                entry.students.push({ name: stuName, plan });
+                entry.total_count = entry.students.length;
+            }
+        }
+    });
+
+    subjectTeacherMap.forEach((entry, key) => {
+        entry.students.forEach(({ name: stuName, plan }) => {
+            const stuRow = students.find(s => s.name === stuName)?.row;
+            if (!stuRow) return;
+
+            const info = getSubjectInfo(stuRow, entry.subjectIndex);
+            if (!info.valid) {
+                const did = `sub||${entry.teacherName}||${entry.subjectIndex}`;
+                if (!studentDetails[did]) {
+                    studentDetails[did] = {
+                        teacherName: entry.teacherName,
+                        type: '任课老师',
+                        subjectIndex: entry.subjectIndex,
+                        subjectName: entry.subjectName,
+                        students: []
+                    };
+                }
+                const already = studentDetails[did].students.some(s => s.name === stuName);
+                if (!already) {
+                    studentDetails[did].students.push({
+                        name: stuName, plan,
+                        gradeRaw: info.gradeRaw || '(空)',
+                        gradeScore: 0,
+                        meet达标: false, pass达标: false, upgrade达标: false,
+                        reason: `等级${info.gradeRaw || '(空)'}非有效值`
+                    });
+                }
+                return;
+            }
+
+            // 使用用户配置的任课教师等级基准
+            const subBench = subBenchmarks[plan];
+            if (!subBench) return;
+
+            const subMeetScore = GRADE_MAP[subBench.meet];
+            const subPassScore = GRADE_MAP[subBench.pass];
+            const subUpgradeScore = GRADE_MAP[subBench.upgrade];
+
+            const diffMeet    = info.score - subMeetScore;
+            const diffPass    = info.score - subPassScore;
+            const diffUpgrade = info.score - subUpgradeScore;
+            const meet达标    = diffMeet >= 0;
+            const pass达标    = diffPass >= 0;
+            const upgrade达标 = diffUpgrade >= 0;
+
+            if (meet达标)   entry.meet_count++;
+            if (pass达标)   entry.pass_count++;
+            if (upgrade达标) entry.upgrade_count++;
+
+            const did = `sub||${entry.teacherName}||${entry.subjectIndex}`;
+            if (!studentDetails[did]) {
+                studentDetails[did] = {
+                    teacherName: entry.teacherName,
+                    type: '任课老师',
+                    subjectIndex: entry.subjectIndex,
+                    subjectName: entry.subjectName,
+                    students: []
+                };
+            }
+            const already = studentDetails[did].students.some(s => s.name === stuName);
+            if (!already) {
+                studentDetails[did].students.push({
+                    name: stuName, plan,
+                    gradeRaw: `${info.gradeNorm}(${info.score}分)`,
+                    gradeScore: info.score,
+                    meet达标, pass达标, upgrade达标,
+                    reason: `${info.gradeNorm}(${info.score}分) - 吻合基准${subBench.meet}(${subMeetScore}分)=${diffMeet>=0?'+'+(diffMeet):diffMeet} | 过关基准${subBench.pass}(${subPassScore}分)=${diffPass>=0?'+'+(diffPass):diffPass} | 升级基准${subBench.upgrade}(${subUpgradeScore}分)=${diffUpgrade>=0?'+'+(diffUpgrade):diffUpgrade}`
+                });
+            }
+        });
+
+        if (entry.total_count > 0) {
+            allResults.push({
+                teacher_type: '任课老师',
+                subject_index: entry.subjectIndex,
+                subject_name: entry.subjectName,
+                teacher_name: entry.teacherName,
+                total_students: entry.total_count,
+                meet_rate: entry.meet_count / entry.total_count,
+                pass_rate: entry.pass_count / entry.total_count,
+                upgrade_rate: entry.upgrade_count / entry.total_count
+            });
+        }
+    });
+
+    // ---- 班主任计算 ----
+    const headTeacherMap = new Map();
+    students.forEach(({ row, name: stuName }) => {
+        const plan = getCell(row, 4) || '';
+        if (!VALID_PLANS.includes(plan)) return;
+        const headTeacher = getCell(row, 3) || '未知';
+        if (!headTeacherMap.has(headTeacher)) {
+            headTeacherMap.set(headTeacher, {
+                teacherName: headTeacher,
+                total_count: 0,
+                meet_count: 0, pass_count: 0, upgrade_count: 0,
+                students: []
+            });
+        }
+        const entry = headTeacherMap.get(headTeacher);
+        if (!entry.students.some(s => s.name === stuName)) {
+            entry.students.push({ name: stuName, plan });
+            entry.total_count = entry.students.length;
+        }
+    });
+
+    headTeacherMap.forEach((entry) => {
+        entry.students.forEach(({ name: stuName, plan }) => {
+            const stuRow = students.find(s => s.name === stuName)?.row;
+            if (!stuRow) return;
+
+            const config = PLAN_DEFAULTS[plan];
+            if (!config) return;
+
+            const bench = headBenchmarks[plan];
+            if (!bench) return;
+
+            const grades = getValidGradesForStudent(stuRow, config.exclude_chinese);
+            if (grades.length === 0) {
+                const did = `head||${entry.teacherName}`;
+                if (!studentDetails[did]) {
+                    studentDetails[did] = { teacherName: entry.teacherName, type: '班主任', subjectIndex: null, subjectName: '所有科目', students: [] };
+                }
+                const already = studentDetails[did].students.some(s => s.name === stuName);
+                if (!already) {
+                    studentDetails[did].students.push({
+                        name: stuName, plan,
+                        gradeRaw: '(无有效等级)',
+                        gradeScore: 0,
+                        meet达标: false, pass达标: false, upgrade达标: false,
+                        reason: '无可用等级（已排除语文或无有效等级）'
+                    });
+                }
+                return;
+            }
+
+            const topN = Math.min(config.subject_count, grades.length);
+            const sorted = [...grades].sort((a, b) => b.score - a.score);
+            const top = sorted.slice(0, topN);
+            const totalScore = top.reduce((s, g) => s + g.score, 0);
+            const topDesc = top.map(g => `${g.subjectName}${g.gradeNorm}`).join('+');
+
+            const diffMeet    = totalScore - bench.meet;
+            const diffPass    = totalScore - bench.pass;
+            const diffUpgrade = totalScore - bench.upgrade;
+            const meet达标    = diffMeet >= 0;
+            const pass达标    = diffPass >= 0;
+            const upgrade达标 = diffUpgrade >= 0;
+
+            if (meet达标)   entry.meet_count++;
+            if (pass达标)   entry.pass_count++;
+            if (upgrade达标) entry.upgrade_count++;
+
+            const did = `head||${entry.teacherName}`;
+            if (!studentDetails[did]) {
+                studentDetails[did] = { teacherName: entry.teacherName, type: '班主任', subjectIndex: null, subjectName: '所有科目', students: [] };
+            }
+            const already = studentDetails[did].students.some(s => s.name === stuName);
+            if (!already) {
+                studentDetails[did].students.push({
+                    name: stuName, plan,
+                    gradeRaw: `${topDesc}=${totalScore}分`,
+                    gradeScore: totalScore,
+                    topDesc, totalScore,
+                    meet达标, pass达标, upgrade达标,
+                    reason: `总分${totalScore} - 吻合${bench.meet}=${diffMeet>=0?'+'+(diffMeet):diffMeet} | 过关${bench.pass}=${diffPass>=0?'+'+(diffPass):diffPass} | 升级${bench.upgrade}=${diffUpgrade>=0?'+'+(diffUpgrade):diffUpgrade}`
+                });
+            }
+        });
+
+        if (entry.total_count > 0) {
+            allResults.push({
+                teacher_type: '班主任',
+                subject_index: null,
+                subject_name: '所有科目',
+                teacher_name: entry.teacherName,
+                total_students: entry.total_count,
+                meet_rate: entry.meet_count / entry.total_count,
+                pass_rate: entry.pass_count / entry.total_count,
+                upgrade_rate: entry.upgrade_count / entry.total_count
+            });
+        }
+    });
+
+    document.getElementById('resultsSection').style.display = 'block';
+    filterAndSortResults();
+    hideLoading();
+    document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ============================================================
+//  DISPLAY
+// ============================================================
+function filterAndSortResults() {
+    const teacherType = document.getElementById('teacherTypeFilter').value;
+    const subjectVal  = document.getElementById('subjectFilter').value;
+    const sortBy      = document.getElementById('sortByFilter').value;
+    const search      = document.getElementById('searchInput').value.toLowerCase().trim();
+
+    let filtered = [...allResults];
+    if (teacherType !== 'all') filtered = filtered.filter(r => r.teacher_type === teacherType);
+    if (subjectVal !== 'all')   filtered = filtered.filter(r => r.subject_index === parseInt(subjectVal));
+    if (search)                 filtered = filtered.filter(r => r.teacher_name.toLowerCase().includes(search));
+
+    filtered.sort((a, b) => {
+        switch (sortBy) {
+            case 'name':         return a.teacher_name.localeCompare(b.teacher_name, 'zh-CN');
+            case 'total':        return b.total_students - a.total_students;
+            case 'meet_rate':    return b.meet_rate - a.meet_rate;
+            case 'pass_rate':    return b.pass_rate - a.pass_rate;
+            case 'upgrade_rate': return b.upgrade_rate - a.upgrade_rate;
+            default:             return 0;
+        }
+    });
+
+    document.getElementById('resultCount').textContent = `共 ${filtered.length} 条`;
+    displayResults(filtered);
+}
+
+function rateClass(rate) {
+    if (rate >= 0.8) return 'rate-high';
+    if (rate >= 0.5) return 'rate-mid';
+    return 'rate-low';
+}
+
+function displayResults(results) {
+    const tbody = document.getElementById('resultsTable');
+    tbody.innerHTML = '';
+
+    if (results.length === 0) {
+        document.getElementById('emptyState').classList.remove('hidden');
+        return;
+    }
+    document.getElementById('emptyState').classList.add('hidden');
+
+    results.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.className = 'result-row border-b border-gray-100';
+
+        const typeBadge = r.teacher_type === '班主任'
+            ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800">班主任</span>'
+            : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-800">任课老师</span>';
+
+        const identifier = r.teacher_type === '班主任'
+            ? `head||${r.teacher_name}`
+            : `sub||${r.teacher_name}||${r.subject_index}`;
+
+        tr.innerHTML = `
+            <td class="px-4 py-3">${typeBadge}</td>
+            <td class="px-4 py-3 text-sm text-neutral-dark">${r.subject_name}</td>
+            <td class="px-4 py-3 font-medium text-sm text-neutral-dark">${r.teacher_name}</td>
+            <td class="px-4 py-3 text-center text-sm">${r.total_students}</td>
+            <td class="px-4 py-3 text-center text-sm ${rateClass(r.meet_rate)}">${(r.meet_rate * 100).toFixed(1)}%</td>
+            <td class="px-4 py-3 text-center text-sm ${rateClass(r.pass_rate)}">${(r.pass_rate * 100).toFixed(1)}%</td>
+            <td class="px-4 py-3 text-center text-sm ${rateClass(r.upgrade_rate)}">${(r.upgrade_rate * 100).toFixed(1)}%</td>
+            <td class="px-4 py-3 text-center">
+                <button class="text-blue-500 hover:text-blue-700 text-sm font-medium view-btn" data-id="${identifier}">详情</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    tbody.querySelectorAll('.view-btn').forEach(btn => {
+        btn.onclick = () => showStudentDetails(btn.dataset.id);
+    });
+}
+
+function showStudentDetails(identifier) {
+    const details = studentDetails[identifier];
+    if (!details) return;
+
+    const isHead = details.type === '班主任';
+
+    document.getElementById('modalTeacherName').textContent =
+        `${details.teacherName} ${isHead ? '' : '— ' + details.subjectName}`;
+    document.getElementById('modalTeacherType').textContent =
+        `${details.type} | 教授 ${details.students.length} 名学生`;
+
+    const sumDiv = document.getElementById('modalSummary');
+    if (isHead) {
+        sumDiv.innerHTML = `<i class="fa-solid fa-info-circle mr-1"></i>班主任：取学生最高N科（国大4科/其他3科）总分，与计划基准比较。差值≥0=达标`;
+    } else {
+        sumDiv.innerHTML = `<i class="fa-solid fa-info-circle mr-1"></i>任课教师：按学生各自培养计划，单科等级分值与该科基准比较。差值≥0=达标`;
+    }
+
+    document.querySelectorAll('.head-only').forEach(el => {
+        el.style.display = isHead ? '' : 'none';
+    });
+
+    const tbody = document.getElementById('studentDetailTable');
+    tbody.innerHTML = '';
+
+    const planBadgeStyle = {
+        '国大计划': 'background:#0369a1;color:white',
+        '卓越计划': 'background:#92400e;color:white',
+        '精英计划': 'background:#5b21b6;color:white',
+        '培优计划': 'background:#065f46;color:white',
+        '青苗计划': 'background:#9d174d;color:white',
+    };
+
+    details.students.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-gray-100 hover:bg-gray-50';
+
+        const badgeStyle = planBadgeStyle[s.plan] || '';
+        const planBadge = s.plan
+            ? `<span class="px-1.5 py-0.5 rounded text-xs font-bold" style="${badgeStyle}">${s.plan}</span>`
+            : '';
+
+        const dotBadge = (ok) =>
+            ok ? '<span class="inline-block w-5 h-5 rounded-full bg-green-500 text-white text-xs font-bold leading-5 text-center">✓</span>'
+               : '<span class="inline-block w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs font-bold leading-5 text-center">✗</span>';
+
+        const totalCell = isHead && s.totalScore !== undefined
+            ? `<td class="px-3 py-2 text-center font-semibold">${s.totalScore}分</td>`
+            : `<td class="px-3 py-2"></td>`;
+
+        tr.innerHTML = `
+            <td class="px-3 py-2 text-sm text-neutral-dark">${s.name}</td>
+            <td class="px-3 py-2">${planBadge}</td>
+            <td class="px-3 py-2 text-sm text-neutral-dark">${s.gradeRaw}</td>
+            ${totalCell}
+            <td class="px-3 py-2 text-center">${dotBadge(s.meet达标)}</td>
+            <td class="px-3 py-2 text-center">${dotBadge(s.pass达标)}</td>
+            <td class="px-3 py-2 text-center">${dotBadge(s.upgrade达标)}</td>
+            <td class="px-3 py-2 text-xs text-gray-500">${s.reason}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    document.getElementById('detailModal').classList.remove('hidden');
+}
+
+// ============================================================
+//  EXPORT — 小数格式（无百分号）
+// ============================================================
+function downloadCSV() {
+    if (allResults.length === 0) return;
+    let lines = ['类型,科目,姓名,总人数,吻合率,过关率,升级率'];
+    allResults.forEach(r => {
+        // 小数格式，4位精度，无百分号
+        lines.push(`${r.teacher_type},${r.subject_name},${r.teacher_name},${r.total_students},${r.meet_rate.toFixed(4)},${r.pass_rate.toFixed(4)},${r.upgrade_rate.toFixed(4)}`);
+    });
+    const csv = lines.join('\n');
+    downloadFile(csv, `三率结果_V3_${new Date().toLocaleDateString('zh-CN')}.csv`, 'text/csv;charset=utf-8');
+}
+
+function downloadExcel() {
+    if (allResults.length === 0) return;
+    const wb = XLSX.utils.book_new();
+
+    // 汇总 sheet — 小数格式
+    const summary = [['类型', '科目', '姓名', '总人数', '吻合率', '过关率', '升级率']];
+    allResults.forEach(r => {
+        summary.push([r.teacher_type, r.subject_name, r.teacher_name, r.total_students,
+            r.meet_rate, r.pass_rate, r.upgrade_rate]);  // 直接存小数，Excel会显示为0.6667
+    });
+    const ws1 = XLSX.utils.aoa_to_sheet(summary);
+    ws1['!cols'] = [{wch:10},{wch:12},{wch:12},{wch:8},{wch:10},{wch:10},{wch:10}];
+    XLSX.utils.book_append_sheet(wb, ws1, '汇总结果');
+
+    // 明细 sheets
+    let count = 0;
+    for (const [id, details] of Object.entries(studentDetails)) {
+        if (count++ >= 200) break;
+        const isHead = details.type === '班主任';
+        const sheetData = [['学生姓名', '培养计划', '等级/分值', isHead ? '总分' : '', '吻合', '过关', '升级', '判断详情']];
+        details.students.forEach(s => {
+            sheetData.push([
+                s.name, s.plan || '', s.gradeRaw,
+                isHead && s.totalScore !== undefined ? `${s.totalScore}分` : '',
+                s.meet达标 ? '✓' : '✗',
+                s.pass达标 ? '✓' : '✗',
+                s.upgrade达标 ? '✓' : '✗',
+                s.reason
+            ]);
+        });
+        const ws = XLSX.utils.aoa_to_sheet(sheetData);
+        const safeName = `${details.teacherName}_${details.subjectName}`.replace(/[\\/*?[\]]/g, '').substring(0, 28);
+        XLSX.utils.book_append_sheet(wb, ws, safeName);
+    }
+
+    XLSX.writeFile(wb, `三率结果_V3_${new Date().toLocaleDateString('zh-CN')}.xlsx`);
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.style.visibility = 'hidden';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// ============================================================
+//  START
+// ============================================================
+document.addEventListener('DOMContentLoaded', initApp);
+</script>
+</body>
+</html>
