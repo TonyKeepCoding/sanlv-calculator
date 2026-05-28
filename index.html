@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>教师三率计算器 V3</title>
+    <title>教师三率计算器 V4</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -81,7 +81,7 @@
     <!-- Header -->
     <div class="gradient-header text-white py-6 mb-6">
         <div class="max-w-7xl mx-auto px-4">
-            <h1 class="text-2xl font-bold"><i class="fa-solid fa-calculator mr-2"></i>教师三率计算器 <span class="text-sm font-normal text-blue-200 ml-2">V3 · 政策2.0</span></h1>
+            <h1 class="text-2xl font-bold"><i class="fa-solid fa-calculator mr-2"></i>教师三率计算器 <span class="text-sm font-normal text-blue-200 ml-2">V4 · 政策2.0</span></h1>
             <p class="text-blue-100 mt-1 text-sm">VWA三率考核 · 吻合率 · 过关率 · 升级率</p>
         </div>
     </div>
@@ -302,6 +302,9 @@
 const GRADE_MAP = { 'A*': 7, 'A': 6, 'B': 5, 'C': 4, 'D': 3, 'E': 2, 'E-': 1, 'U': 0 };
 const VALID_GRADES = Object.keys(GRADE_MAP);
 const GRADE_OPTIONS = ['A*', 'A', 'B', 'C', 'D', 'E', 'E-', 'U'];
+
+// 缺考标记（这些等级不计入总人数和三率）
+const ABSENT_MARKERS = ['X', 'x', '缺考', 'ABS', 'abs'];
 
 // 科目起始列（0-based），Excel F列=索引5，之后每科占2列
 const COLUMN_START = 5;
@@ -625,7 +628,19 @@ function normalizeGrade(v) {
     return s;
 }
 
+/**
+ * 检查是否为缺考标记（X/x/缺考等）
+ * 缺考学生不计入总人数和三率计算
+ */
+function isAbsent(v) {
+    if (!v) return false;
+    const s = String(v).trim().toUpperCase();
+    return ABSENT_MARKERS.some(m => m.toUpperCase() === s);
+}
+
 function isValidGrade(v) {
+    // 缺考不是有效成绩
+    if (isAbsent(v)) return false;
     const g = normalizeGrade(v);
     return g !== null && VALID_GRADES.includes(g);
 }
@@ -648,20 +663,21 @@ function getSubjectInfo(row, subjectIndex) {
     const teacherName = getCell(row, teacherCol);
     const gradeRaw    = getCell(row, gradeCol);
     const gradeNorm   = normalizeGrade(gradeRaw);
-    const score       = isValidGrade(gradeRaw) ? GRADE_MAP[gradeNorm] : 0;
+    const absent      = isAbsent(gradeRaw);
     const valid       = isValidGrade(gradeRaw);
+    const score       = valid ? GRADE_MAP[gradeNorm] : 0;
 
     const headers = rawData[0] || [];
     const subjectName = (headers[teacherCol] || '').trim() || `科目${subjectIndex}`;
 
-    return { teacherName, gradeRaw, gradeNorm, score, valid, subjectName, teacherCol, gradeCol };
+    return { teacherName, gradeRaw, gradeNorm, score, valid, absent, subjectName, teacherCol, gradeCol };
 }
 
 function getValidGradesForStudent(row, excludeChinese) {
     const grades = [];
     for (let s = 1; s <= MAX_SUBJECTS; s++) {
         const info = getSubjectInfo(row, s);
-        if (!info.valid) continue;
+        if (!info.valid) continue;  // 已自动排除缺考
         if (excludeChinese && isChinese(info.subjectName)) continue;
         grades.push({ subjectIndex: s, subjectName: info.subjectName, score: info.score, gradeNorm: info.gradeNorm, gradeRaw: info.gradeRaw });
     }
@@ -732,6 +748,9 @@ function calculateAll() {
             }
 
             const entry = subjectTeacherMap.get(key);
+
+            // 【V4改动】缺考学生不计入总数
+            if (info.absent) continue;
             if (!entry.students.some(x => x.name === stuName)) {
                 entry.students.push({ name: stuName, plan });
                 entry.total_count = entry.students.length;
@@ -745,7 +764,9 @@ function calculateAll() {
             if (!stuRow) return;
 
             const info = getSubjectInfo(stuRow, entry.subjectIndex);
-            if (!info.valid) {
+
+            // 再次确认非缺考且有效
+            if (info.absent || !info.valid) {
                 const did = `sub||${entry.teacherName}||${entry.subjectIndex}`;
                 if (!studentDetails[did]) {
                     studentDetails[did] = {
@@ -760,10 +781,10 @@ function calculateAll() {
                 if (!already) {
                     studentDetails[did].students.push({
                         name: stuName, plan,
-                        gradeRaw: info.gradeRaw || '(空)',
+                        gradeRaw: info.absent ? `${info.gradeRaw}(缺考)` : (info.gradeRaw || '(空)'),
                         gradeScore: 0,
                         meet达标: false, pass达标: false, upgrade达标: false,
-                        reason: `等级${info.gradeRaw || '(空)'}非有效值`
+                        reason: info.absent ? '缺考，不计入统计' : `等级${info.gradeRaw || '(空)'}非有效值`
                     });
                 }
                 return;
@@ -830,6 +851,14 @@ function calculateAll() {
         const plan = getCell(row, 4) || '';
         if (!VALID_PLANS.includes(plan)) return;
         const headTeacher = getCell(row, 3) || '未知';
+
+        // 【V4改动】检查该学生是否有任何有效成绩（非全缺考）
+        // 如果该学生在所有科目中都缺考，则不纳入班主任统计
+        const config = PLAN_DEFAULTS[plan];
+        if (!config) return;
+        const hasAnyValidGrade = getValidGradesForStudent(row, config.exclude_chinese).length > 0;
+        if (!hasAnyValidGrade) return;
+
         if (!headTeacherMap.has(headTeacher)) {
             headTeacherMap.set(headTeacher, {
                 teacherName: headTeacher,
@@ -1019,9 +1048,9 @@ function showStudentDetails(identifier) {
 
     const sumDiv = document.getElementById('modalSummary');
     if (isHead) {
-        sumDiv.innerHTML = `<i class="fa-solid fa-info-circle mr-1"></i>班主任：取学生最高N科（国大4科/其他3科）总分，与计划基准比较。差值≥0=达标`;
+        sumDiv.innerHTML = `<i class="fa-solid fa-info-circle mr-1"></i>班主任：取学生最高N科（国大4科/其他3科）总分，与计划基准比较。差值≥0=达标。<br><span class="text-orange-500 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i>注：缺考(X)学生已从统计中排除</span>`;
     } else {
-        sumDiv.innerHTML = `<i class="fa-solid fa-info-circle mr-1"></i>任课教师：按学生各自培养计划，单科等级分值与该科基准比较。差值≥0=达标`;
+        sumDiv.innerHTML = `<i class="fa-solid fa-info-circle mr-1"></i>任课教师：按学生各自培养计划，单科等级分值与该科基准比较。差值≥0=达标。<br><span class="text-orange-500 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i>注：缺考(X)学生已从统计中排除</span>`;
     }
 
     document.querySelectorAll('.head-only').forEach(el => {
@@ -1073,61 +1102,135 @@ function showStudentDetails(identifier) {
 }
 
 // ============================================================
-//  EXPORT — 小数格式（无百分号）
+//  EXPORT — 小数格式（无百分号）+ 每个教师独立详情sheet
 // ============================================================
 function downloadCSV() {
     if (allResults.length === 0) return;
     let lines = ['类型,科目,姓名,总人数,吻合率,过关率,升级率'];
     allResults.forEach(r => {
-        // 小数格式，4位精度，无百分号
         lines.push(`${r.teacher_type},${r.subject_name},${r.teacher_name},${r.total_students},${r.meet_rate.toFixed(4)},${r.pass_rate.toFixed(4)},${r.upgrade_rate.toFixed(4)}`);
     });
     const csv = lines.join('\n');
-    downloadFile(csv, `三率结果_V3_${new Date().toLocaleDateString('zh-CN')}.csv`, 'text/csv;charset=utf-8');
+    downloadFile(csv, `三率结果_V4_${new Date().toLocaleDateString('zh-CN')}.csv`, 'text/csv;charset=utf-8');
 }
 
 function downloadExcel() {
     if (allResults.length === 0) return;
     const wb = XLSX.utils.book_new();
 
-    // 汇总 sheet — 小数格式
+    // ===== Sheet 1: 汇总结果 =====
     const summary = [['类型', '科目', '姓名', '总人数', '吻合率', '过关率', '升级率']];
     allResults.forEach(r => {
         summary.push([r.teacher_type, r.subject_name, r.teacher_name, r.total_students,
-            r.meet_rate, r.pass_rate, r.upgrade_rate]);  // 直接存小数，Excel会显示为0.6667
+            r.meet_rate, r.pass_rate, r.upgrade_rate]);
     });
     const ws1 = XLSX.utils.aoa_to_sheet(summary);
     ws1['!cols'] = [{wch:10},{wch:12},{wch:12},{wch:8},{wch:10},{wch:10},{wch:10}];
     XLSX.utils.book_append_sheet(wb, ws1, '汇总结果');
 
-    // 明细 sheets
-    let count = 0;
-    for (const [id, details] of Object.entries(studentDetails)) {
-        if (count++ >= 200) break;
+    // ===== Sheet 2+: 每个教师的独立详情 =====
+    let detailSheetIndex = 1;
+    
+    // 按照汇总结果的顺序遍历，确保顺序一致
+    for (const result of allResults) {
+        const identifier = result.teacher_type === '班主任'
+            ? `head||${result.teacher_name}`
+            : `sub||${result.teacher_name}||${result.subject_index}`;
+        
+        const details = studentDetails[identifier];
+        if (!details || !details.students || details.students.length === 0) continue;
+
+        detailSheetIndex++;
+
         const isHead = details.type === '班主任';
-        const sheetData = [['学生姓名', '培养计划', '等级/分值', isHead ? '总分' : '', '吻合', '过关', '升级', '判断详情']];
-        details.students.forEach(s => {
-            sheetData.push([
-                s.name, s.plan || '', s.gradeRaw,
-                isHead && s.totalScore !== undefined ? `${s.totalScore}分` : '',
+        
+        // 构建表头
+        const headerRow = ['序号', '学生姓名', '培养计划', '等级/分值'];
+        if (isHead) headerRow.push('总分');
+        headerRow.push('吻合', '过关', '升级', '判断详情');
+
+        const sheetData = [headerRow];
+
+        details.students.forEach((s, idx) => {
+            const row = [
+                idx + 1,
+                s.name,
+                s.plan || '',
+                s.gradeRaw
+            ];
+            if (isHead && s.totalScore !== undefined) {
+                row.push(`${s.totalScore}分`);
+            } else if (isHead) {
+                row.push('');
+            }
+            row.push(
                 s.meet达标 ? '✓' : '✗',
                 s.pass达标 ? '✓' : '✗',
                 s.upgrade达标 ? '✓' : '✗',
                 s.reason
-            ]);
+            );
+            sheetData.push(row);
         });
+
+        // 在详情数据后追加一行汇总统计
+        sheetData.push([]);
+        sheetData.push(['--- 统计汇总 ---']);
+        sheetData.push([
+            '',
+            `总人数: ${result.total_students}`,
+            `吻合达标: ${Math.round(result.meet_rate * result.total_students)}人 (${(result.meet_rate * 100).toFixed(1)}%)`,
+            `过关达标: ${Math.round(result.pass_rate * result.total_students)}人 (${(result.pass_rate * 100).toFixed(1)}%)`,
+            `升级达标: ${Math.round(result.upgrade_rate * result.total_students)}人 (${(result.upgrade_rate * 100).toFixed(1)}%)`
+        ]);
+
         const ws = XLSX.utils.aoa_to_sheet(sheetData);
-        const safeName = `${details.teacherName}_${details.subjectName}`.replace(/[\\/*?[\]]/g, '').substring(0, 28);
-        XLSX.utils.book_append_sheet(wb, ws, safeName);
+        
+        // 设置列宽
+        ws['!cols'] = [
+            {wch:6},   // 序号
+            {wch:12},  // 学生姓名
+            {wch:10},  // 培养计划
+            {wch:22},  // 等级/分值
+            {wch:8},   // 总分（仅班主任）
+            {wch:6},   // 吻合
+            {wch:6},   // 过关
+            {wch:6},   // 升级
+            {wch:60},  // 判断详情
+        ];
+
+        // Sheet 名称：类型_姓名_科目（截断避免超长）
+        let sheetName = '';
+        if (isHead) {
+            sheetName = `班主任_${result.teacher_name}`;
+        } else {
+            sheetName = `任课_${result.teacher_name}_${result.subject_name}`;
+        }
+        // Excel sheet名最长31字符，并去除非法字符
+        sheetName = sheetName.replace(/[\\/*?[\]]/g, '').substring(0, 31);
+        
+        // 避免重名
+        const finalName = ensureUniqueSheetName(wb, sheetName);
+        XLSX.utils.book_append_sheet(wb, ws, finalName);
     }
 
-    XLSX.writeFile(wb, `三率结果_V3_${new Date().toLocaleDateString('zh-CN')}.xlsx`);
+    XLSX.writeFile(wb, `三率结果_V4_${new Date().toLocaleDateString('zh-CN')}.xlsx`);
+}
+
+/**
+ * 确保Sheet名称唯一（Excel不允许同名sheet）
+ */
+function ensureUniqueSheetName(wb, name) {
+    if (!wb.SheetNames || !wb.SheetNames.includes(name)) return name;
+    let counter = 2;
+    while (wb.SheetNames.includes(`${name}_${counter}`)) counter++;
+    return `${name}_${counter}`;
 }
 
 function downloadFile(content, filename, mimeType) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+
     a.href = url; a.download = filename; a.style.visibility = 'hidden';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
